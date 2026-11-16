@@ -1,0 +1,6 @@
+FROM php:8.5.11-fpm
+COPY lab/vd24481/html/ /var/www/html/
+COPY lab/vd24481/zz-vd24481.ini /usr/local/etc/php/conf.d/zz-vd24481.ini
+COPY lab/vd24481/pool.conf /usr/local/etc/php-fpm.d/zz-vd24481.conf
+RUN chown -R www-data:www-data /var/www/html
+WORKDIR /var/www/html

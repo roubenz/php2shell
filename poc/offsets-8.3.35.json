@@ -1,0 +1,40 @@
+{
+ "version": "8.3.35",
+ "bg_unserialize_off": 23184984,
+ "zval_ptr_dtor": 5745360,
+ "core_globals": 23200096,
+ "pg_auto_prepend_off": 23200256,
+ "a_off": 434176,
+ "copy_off": 8192,
+ "sid_off": -24512,
+ "prepend_type": "char*",
+ "prepend_neighbors": {
+  "before": "error_prepend_string",
+  "after": "auto_append_file"
+ },
+ "zif_system": 4751104,
+ "zif_quotemeta": 4935744,
+ "rodata_x": 18184520,
+ "anchor_deltas": {
+  "str_repeat": 5856,
+  "printf": 34832,
+  "file_exists": 28576,
+  "file_get_contents": 23552,
+  "ini_get": -29568,
+  "ini_parse_quantity": -28144,
+  "memory_get_usage": 82352,
+  "unserialize": 82032
+ },
+ "anchor_slots": {
+  "0": "file_exists",
+  "1": "str_repeat",
+  "2": "printf",
+  "3": "file_get_contents",
+  "4": "ini_parse_quantity",
+  "5": "ini_get",
+  "6": "max",
+  "7": "memory_get_usage",
+  "8": "unserialize"
+ },
+ "handler_off": 72
+}

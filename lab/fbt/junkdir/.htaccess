@@ -1,0 +1,6 @@
+# Invalid per-dir php_value applied by mod_php at PHP_INI_STAGE_HTACCESS, BEFORE
+# request startup. The invalid quantity makes OnUpdateMemoryConsumption emit a
+# zend_error(E_WARNING); zend_error() clears EG(last_fatal_error_backtrace)
+# first -> zval_ptr_dtor on the stale (freed) zval left by a prior fatal.php on
+# this child -> UAF.
+php_value memory_limit "fbt_not_a_valid_quantity"

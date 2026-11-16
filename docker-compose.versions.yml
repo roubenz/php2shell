@@ -1,0 +1,286 @@
+# docker-compose.versions.yml -- MERGED "versions" group.
+#
+# Folds four per-avenue version / dual-SAPI variant stacks into one file,
+# selected with Compose `profiles:`. Each original compose became one profile;
+# every service kept its ports / image tags / build args / volumes / env /
+# depends_on verbatim. Service map-keys are prefixed `<profile>-` to avoid
+# collisions (rvt + c2 both had `cli-vuln`; vd24481 + vd24481-8511 both had
+# `fpm`/`web`); the ORIGINAL service name survives as a network alias so
+# in-container DNS (nginx fastcgi_pass fpm-vuln / fpm, url http://web-vuln) is
+# unchanged. container_name is preserved verbatim where the original set one,
+# and pinned for c2 (whose PoCs use the old auto-names).
+#
+#   rvt           -> profile rvt           (cli + fpm + web, php 8.4.26)
+#   vd24481       -> profile vd24481        (fpm + web, php 8.4.26)
+#   vd24481-8511  -> profile vd24481-8511   (fpm + web, php 8.5.11)
+#   c2            -> profile c2            (cli + apache mod_php, php 8.4.26)
+#
+# Bring up one stack:  docker compose -f docker-compose.versions.yml --profile <p> up -d --build
+# Services of one:     docker compose -f docker-compose.versions.yml --profile <p> config --services
+# Tear down:           docker compose -f docker-compose.versions.yml --profile <p> down
+#
+# CAUTION -- all profiles share ONE default network in this file, so the reused
+# aliases are mutually exclusive AT RUNTIME: do NOT run rvt + c2 together (both
+# alias `cli-vuln`) nor vd24481 + vd24481-8511 together (both alias `fpm`/`web`).
+# Run one profile at a time (exactly as the original separate projects did).
+
+services:
+  # ========================= profile: rvt =========================
+  # was docker-compose.rvt.yml (project p2s-rvt). cli + php-fpm 8.4.26 behind
+  # nginx; backs poc/primitives/read_leak/verify_rtc_transplant_resolver.py (+ rtc_transplant_resolver.py). The verify
+  # script routes `docker compose exec` via COMPOSE_FILE and addresses services
+  # by key, so it must use the new keys (rvt-cli-vuln / rvt-fpm-vuln) and the
+  # --profile rvt flag on up (see report).
+  rvt-cli-vuln:
+    build:
+      context: .
+      dockerfile: lab/cli/Dockerfile
+      args:
+        PHP_VERSION: "8.4.26"
+    image: p2s-rvt-cli:latest
+    container_name: p2s-rvt-cli
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "8172:80"
+    profiles: ["rvt"]
+    networks:
+      default:
+        aliases: ["cli-vuln"]
+
+  rvt-fpm-vuln:
+    build:
+      context: .
+      dockerfile: lab/fpm/Dockerfile
+      args:
+        PHP_VERSION: "8.4.26"
+    image: p2s-rvt-fpm:latest
+    container_name: p2s-rvt-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    profiles: ["rvt"]
+    networks:
+      default:
+        aliases: ["fpm-vuln"]
+
+  rvt-web-vuln:
+    image: nginx:1.27-alpine
+    container_name: p2s-rvt-web
+    volumes:
+      - ./lab/rvt/nginx-vuln.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - rvt-fpm-vuln
+    profiles: ["rvt"]
+    networks:
+      default:
+        aliases: ["web-vuln"]
+
+  # ====================== profile: vd24481 (php 8.4.26) ======================
+  # was docker-compose.vd24481.yml (project p2s-vd24481). #24481 remote-delivery
+  # lab; poc/var_destroy_24481_remote.py + fpm_fullchain_rce.py reach it purely
+  # over HTTP at http://127.0.0.1:8185 (no docker exec), so only the port and the
+  # internal `fpm` alias matter.
+  vd24481-fpm:
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-vd24481-fpm
+    volumes:
+      - ./lab/vd24481/html:/var/www/html:ro
+      - ./lab/vd24481/zz-vd24481.ini:/usr/local/etc/php/conf.d/zz-vd24481.ini:ro
+      - ./lab/vd24481/pool.conf:/usr/local/etc/php-fpm.d/zz-vd24481.conf:ro
+    profiles: ["vd24481"]
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  vd24481-web:
+    image: nginx:alpine
+    container_name: p2s-vd24481-web
+    depends_on:
+      - vd24481-fpm
+    ports:
+      - "127.0.0.1:8185:80"
+    volumes:
+      - ./lab/vd24481/nginx.conf:/etc/nginx/nginx.conf:ro
+    profiles: ["vd24481"]
+    networks:
+      default:
+        aliases: ["web"]
+
+  # =================== profile: vd24481-8511 (php 8.5.11) ===================
+  # was docker-compose.vd24481-8511.yml (project p2s-vd24481-8511). 8.5.11
+  # variant; distinct build (Dockerfile.8511) + distinct image tag
+  # (p2s-vd24481-fpm:8.5.11). Reached over HTTP at http://127.0.0.1:8186.
+  vd24481-8511-fpm:
+    build:
+      context: .
+      dockerfile: lab/vd24481/Dockerfile.8511
+    image: p2s-vd24481-fpm:8.5.11
+    container_name: p2s-vd24481-8511-fpm
+    cap_add:
+      - SYS_PTRACE
+    profiles: ["vd24481-8511"]
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  vd24481-8511-web:
+    image: nginx:alpine
+    container_name: p2s-vd24481-8511-web
+    depends_on:
+      - vd24481-8511-fpm
+    ports:
+      - "127.0.0.1:8186:80"
+    volumes:
+      - ./lab/vd24481/nginx.conf:/etc/nginx/nginx.conf:ro
+    profiles: ["vd24481-8511"]
+    networks:
+      default:
+        aliases: ["web"]
+
+  # =============== profile: vd24481-8511-apache (php 8.5.11) ===============
+  # Apache mod_php sibling of vd24481-8511: serves the SAME a7 echo sink
+  # (lab/vd24481/html/remote_app.php) over stock php:8.5.11-apache (prefork), so
+  # the remote-rce apache route (universal_remote_rce, 8.5.x libphp scan) is
+  # testable end to end. http://127.0.0.1:8187/remote_app.php
+  vd24481-8511-apache:
+    image: php:8.5.11-apache
+    container_name: p2s-vd24481-8511-apache
+    ports:
+      - "127.0.0.1:8187:80"
+    volumes:
+      - ./lab/vd24481/html:/var/www/html:ro
+      - ./lab/vd24481/zz-vd24481.ini:/usr/local/etc/php/conf.d/zz-vd24481.ini:ro
+    profiles: ["vd24481-8511-apache"]
+
+  # ========================= profile: c2 =========================
+  # was docker-compose.c2.yml (project php2shell_c2). a6 cli + Apache mod_php
+  # 8.4.26. The apache image is auto-named php2shell_c2-apache-vuln:latest in the
+  # original (project+service) and REUSED by docker-compose.{oomdisc,pgpersist,
+  # rshutdown,survive}.yml, so it is pinned explicitly here to survive the
+  # project/service rename. cli-vuln reuses the main lab image php2shell-cli-vuln.
+  # container_name is pinned to the original compose auto-names so `docker exec
+  # php2shell_c2-*-1` still resolves. No host ports
+  # (a6 runs in-container via docker compose exec; address --service c2-cli-vuln).
+  c2-cli-vuln:
+    image: php2shell-cli-vuln:latest
+    container_name: php2shell_c2-cli-vuln-1
+    profiles: ["c2"]
+    networks:
+      default:
+        aliases: ["cli-vuln"]
+
+  c2-apache-vuln:
+    build:
+      context: .
+      dockerfile: lab/apache/Dockerfile
+      args:
+        PHP_VERSION: "8.4.26"
+    image: php2shell_c2-apache-vuln:latest
+    container_name: php2shell_c2-apache-vuln-1
+    profiles: ["c2"]
+    networks:
+      default:
+        aliases: ["apache-vuln"]
+
+  # ============ profiles upc83 / upc8332 / upc8332gdb (session upload-progress UAF) ============
+  # CVE-2026-109619 pure-HTTP session-UAF -> file-write RCE on stock PHP 8.3.26-fpm (the reference target's
+  # actual version). lab/upc is reused for every version via the PHP_VERSION / MEMORY_LIMIT build
+  # args; it carries the reference target's directive set with session.upload_progress.cleanup=On.
+  # Backs poc/chains/upc_rce_singleshot.py (+ verify_upc_rce_singleshot.py) and lab/upc/verify_upc.py.
+  # The pure-HTTP arm (BG(unserialize) dangle) is reproducible on 8.3.26 but exit-70s on 8.4.26
+  # (the cheap-nested-array regression is documented in the chain docstring). Run one profile at a
+  # time -- all three reuse the fpm/web aliases.
+  #   upc83      -> 127.0.0.1:8195  512M  mirrors the reference target
+  #   upc8332    -> 127.0.0.1:8196   32M  fast-fill variant
+  #   upc8332gdb -> 127.0.0.1:8198   32M  + gdb (SYS_PTRACE), OFFSET CALIBRATION ONLY
+  upc83-fpm:
+    build:
+      context: .
+      dockerfile: lab/upc/Dockerfile
+      args:
+        PHP_VERSION: "8.3.26"
+        MEMORY_LIMIT: "512M"
+    image: p2s-upc83-fpm:latest
+    container_name: p2s-upc83-fpm
+    profiles: ["upc83"]
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  upc83-web:
+    image: nginx:1.27-alpine
+    container_name: p2s-upc83-web
+    depends_on:
+      - upc83-fpm
+    ports:
+      - "127.0.0.1:8195:80"
+    volumes:
+      - ./lab/upc/nginx.conf:/etc/nginx/nginx.conf:ro
+    profiles: ["upc83"]
+    networks:
+      default:
+        aliases: ["web"]
+
+  upc8332-fpm:
+    build:
+      context: .
+      dockerfile: lab/upc/Dockerfile
+      args:
+        PHP_VERSION: "8.3.26"
+        MEMORY_LIMIT: "32M"
+    image: p2s-upc8332-fpm:latest
+    container_name: p2s-upc8332-fpm
+    profiles: ["upc8332"]
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  upc8332-web:
+    image: nginx:1.27-alpine
+    container_name: p2s-upc8332-web
+    depends_on:
+      - upc8332-fpm
+    ports:
+      - "127.0.0.1:8196:80"
+    volumes:
+      - ./lab/upc/nginx.conf:/etc/nginx/nginx.conf:ro
+    profiles: ["upc8332"]
+    networks:
+      default:
+        aliases: ["web"]
+
+  upc8332gdb-fpm:
+    build:
+      context: .
+      dockerfile: lab/upc/Dockerfile.gdb
+      args:
+        PHP_VERSION: "8.3.26"
+        MEMORY_LIMIT: "32M"
+    image: p2s-upc8332gdb-fpm:latest
+    container_name: p2s-upc8332gdb-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    profiles: ["upc8332gdb"]
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  upc8332gdb-web:
+    image: nginx:1.27-alpine
+    container_name: p2s-upc8332gdb-web
+    depends_on:
+      - upc8332gdb-fpm
+    ports:
+      - "127.0.0.1:8198:80"
+    volumes:
+      - ./lab/upc/nginx.conf:/etc/nginx/nginx.conf:ro
+    profiles: ["upc8332gdb"]
+    networks:
+      default:
+        aliases: ["web"]

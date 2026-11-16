@@ -1,0 +1,1093 @@
+# Consolidated "fpm-avenues" compose file.
+#
+# Merges the following per-avenue compose files into ONE file using Compose
+# `profiles:` (one avenue up at a time). Each original <token> becomes a profile
+# name; bring an avenue up with:
+#
+#   docker compose -f docker-compose.fpm-avenues.yml --profile <token> up -d --build
+#   docker compose -f docker-compose.fpm-avenues.yml --profile <token> down
+#
+# Profiles: a7r5 brleak cw erd filterchain flp fpm426-gdb glc grail hl hz1
+#           incrace incvec lexbor nday opcache osh parseroracle pggc phar pkg
+#           redissess savepathhijack seat seo sfpi shmfl tp wex
+#
+# NOTE: gdb labs use image p2s-fpm426-gdb (profile fpm426-gdb); build it first.
+#
+# MERGE CONVENTION (keeps every PoC working):
+#  - This file stays at repo root, so `context: .` and `./lab/...` paths are
+#    unchanged and byte-identical to the originals.
+#  - Each service key is renamed "<profile>-<origname>" to avoid collisions;
+#    every service carries a network alias equal to its ORIGINAL service name so
+#    in-network DNS (nginx `fastcgi_pass fpm:9000`, `tcp://redis:6379`, ...)
+#    still resolves. Profiles keep one avenue up at a time, so aliases never
+#    clash at runtime.
+#  - `container_name`, ports, build, image, volumes, environment, command,
+#    cap_add, security_opt, depends_on semantics are preserved verbatim.
+#  - The original docker-compose.<token>.yml files are retained unchanged; this
+#    file is an additive grouped convenience.
+
+services:
+
+  # ===================== profile: fpm426-gdb (shared gdb-analysis base) =====================
+  # Shared gdb base image p2s-fpm426-gdb (used by cw grail hl tp glc flp seat brleak); build once.
+  fpm426-gdb-base:
+    profiles: ["fpm426-gdb"]
+    build:
+      context: .
+      dockerfile: lab/fpm426-gdb/Dockerfile
+    image: p2s-fpm426-gdb
+    command: ["true"]
+
+  # ===================== profile: a7r5 (project was p2s-a7r5) =====================
+  a7r5-fpm:
+    profiles: ["a7r5"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-a7r5-fpm
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./lab/a7r5/html:/var/www/html:ro
+      - ./lab/a7r5/zz-a7r5.ini:/usr/local/etc/php/conf.d/zz-a7r5.ini:ro
+      - ./lab/a7r5/pool.conf:/usr/local/etc/php-fpm.d/zz-a7r5.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  a7r5-web:
+    profiles: ["a7r5"]
+    image: nginx:alpine
+    container_name: p2s-a7r5-web
+    depends_on:
+      - a7r5-fpm
+    ports:
+      - "127.0.0.1:8167:80"
+    volumes:
+      - ./lab/a7r5/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: brleak (project was p2s-brleak) =====================
+  brleak-fpm:
+    profiles: ["brleak"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-brleak-fpm
+    volumes:
+      - ./lab/brleak/html:/var/www/html:ro
+      - ./lab/brleak/zz-brleak.ini:/usr/local/etc/php/conf.d/zz-brleak.ini:ro
+      - ./lab/brleak/pool.conf:/usr/local/etc/php-fpm.d/zz-brleak.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  brleak-web:
+    profiles: ["brleak"]
+    image: nginx:alpine
+    container_name: p2s-brleak-web
+    depends_on:
+      - brleak-fpm
+    ports:
+      - "127.0.0.1:8169:80"
+    volumes:
+      - ./lab/brleak/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: cw (project was p2s-cw) =====================
+  cw-fpm:
+    profiles: ["cw"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-cw-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/app/index.php:/var/www/html/index.php:ro
+      - ./lab/app/poc.php:/var/www/html/poc.php:ro
+      - ./lab/app/producer.php:/var/www/html/producer.php:ro
+      - ./lab/app/r2g.php:/var/www/html/r2g.php:ro
+      - ./lab/app/sess.php:/var/www/html/sess.php:ro
+      - ./lab/app/unser.php:/var/www/html/unser.php:ro
+      - ./lab/cw/plain.php:/var/www/html/plain.php:ro
+      - ./lab/cw/cw.ini:/usr/local/etc/php/conf.d/zz-cw.ini:ro
+      - ./lab/cw/pool.conf:/usr/local/etc/php-fpm.d/zz-cw.conf:ro
+      - type: tmpfs
+        target: /var/sess
+        tmpfs:
+          mode: 01777
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  cw-web:
+    profiles: ["cw"]
+    image: nginx:1.27-alpine
+    container_name: p2s-cw-web
+    depends_on:
+      - cw-fpm
+    ports:
+      - "8151:80"
+    volumes:
+      - ./lab/cw/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: erd (project was p2s-erd) =====================
+  erd-fpm:
+    profiles: ["erd"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-erd-fpm
+    volumes:
+      - ./lab/erd/html:/var/www/html:ro
+      - ./lab/erd/zz-erd.ini:/usr/local/etc/php/conf.d/zz-erd.ini:ro
+      - ./lab/erd/pool.conf:/usr/local/etc/php-fpm.d/zz-erd.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  erd-web:
+    profiles: ["erd"]
+    image: nginx:alpine
+    container_name: p2s-erd-web
+    depends_on:
+      - erd-fpm
+    ports:
+      - "127.0.0.1:8170:80"
+    volumes:
+      - ./lab/erd/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: filterchain (project was p2s-fc) =====================
+  filterchain-fpm:
+    profiles: ["filterchain"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-fc-fpm
+    volumes:
+      - ./lab/filterchain/index.php:/var/www/html/index.php:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  filterchain-web:
+    profiles: ["filterchain"]
+    image: nginx:alpine
+    container_name: p2s-fc-web
+    depends_on:
+      - filterchain-fpm
+    ports:
+      - "${FC_PORT:-8140}:80"
+    volumes:
+      - ./lab/filterchain/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: flp (project was p2s-flp) =====================
+  flp-fpm:
+    profiles: ["flp"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-flp-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/flp/html:/var/www/html:ro
+      - ./lab/flp/flp.ini:/usr/local/etc/php/conf.d/zz-flp.ini:ro
+      - ./lab/flp/pool.conf:/usr/local/etc/php-fpm.d/zz-flp.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  flp-web:
+    profiles: ["flp"]
+    image: nginx:1.27-alpine
+    container_name: p2s-flp-web
+    depends_on:
+      - flp-fpm
+    ports:
+      - "127.0.0.1:8157:80"
+    volumes:
+      - ./lab/flp/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: fpmps (ps_files->basedir file-write finisher) =====================
+  fpmps-fpm:
+    profiles: ["fpmps"]
+    image: php:8.4.26-fpm
+    container_name: p2s-fpmps-fpm
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./lab/fpmps/html:/var/www/html:ro
+      - ./lab/fpmps/pool.conf:/usr/local/etc/php-fpm.d/zz-fpmps.conf:ro
+
+  fpmps-web:
+    profiles: ["fpmps"]
+    image: nginx:1.27-alpine
+    container_name: p2s-fpmps-web
+    depends_on:
+      - fpmps-fpm
+    ports:
+      - "127.0.0.1:18082:80"
+    volumes:
+      - ./lab/fpmps/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # ===================== profile: fpmfire (fire-the-write finisher: fpmps + writable web-served /pub) =====================
+  # Byte-identical to fpmps (same image/pool.conf/html/nginx dispatch) EXCEPT a
+  # writable, web-served /var/www/html/pub (tmpfs 1777) modeling the common
+  # "writable uploads dir under docroot" case. Used to demonstrate firing the
+  # ps_files->basedir file-write as code: write the webshell into /pub, GET it.
+  fpmfire-fpm:
+    profiles: ["fpmfire"]
+    image: php:8.4.26-fpm
+    container_name: p2s-fpmfire-fpm
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./lab/fpmfire/html:/var/www/html:ro
+      - ./lab/fpmfire/pool.conf:/usr/local/etc/php-fpm.d/zz-fpmps.conf:ro
+    tmpfs:
+      - /var/www/html/pub:mode=1777
+
+  fpmfire-web:
+    profiles: ["fpmfire"]
+    image: nginx:1.27-alpine
+    container_name: p2s-fpmfire-web
+    depends_on:
+      - fpmfire-fpm
+    ports:
+      - "127.0.0.1:18085:80"
+    volumes:
+      - ./lab/fpmfire/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # ===================== profile: fpmfiremw (multi-worker fire-the-write finisher) =====================
+  # 6-worker variant of fpmfire (same image/pool.conf except pm.max_children/
+  # start_servers=6). Reuses fpmfire's arm/echo/probe.php and apsf's sess.php
+  # (the pure-HTTP session seat) directly -- no duplicated endpoints.
+  fpmfiremw-fpm:
+    profiles: ["fpmfiremw"]
+    image: php:8.4.26-fpm
+    container_name: p2s-fpmfiremw-fpm
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./lab/fpmfire/html/arm.php:/var/www/html/arm.php:ro
+      - ./lab/fpmfire/html/echo.php:/var/www/html/echo.php:ro
+      - ./lab/fpmfire/html/probe.php:/var/www/html/probe.php:ro
+      - ./lab/apsf/html/sess.php:/var/www/html/sess.php:ro
+      - ./lab/fpmfiremw/pool.conf:/usr/local/etc/php-fpm.d/zz-fpmfiremw.conf:ro
+    tmpfs:
+      - /var/www/html/pub:mode=1777
+
+  fpmfiremw-web:
+    profiles: ["fpmfiremw"]
+    image: nginx:1.27-alpine
+    container_name: p2s-fpmfiremw-web
+    depends_on:
+      - fpmfiremw-fpm
+    ports:
+      - "127.0.0.1:18101:80"
+    volumes:
+      - ./lab/fpmfiremw/nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # ===================== profile: glc (project was p2s-glc) =====================
+  glc-fpm:
+    profiles: ["glc"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-glc-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/app/index.php:/var/www/html/index.php:ro
+      - ./lab/app/poc.php:/var/www/html/poc.php:ro
+      - ./lab/app/producer.php:/var/www/html/producer.php:ro
+      - ./lab/app/r2g.php:/var/www/html/r2g.php:ro
+      - ./lab/app/sess.php:/var/www/html/sess.php:ro
+      - ./lab/app/unser.php:/var/www/html/unser.php:ro
+      - ./lab/glc/plain.php:/var/www/html/plain.php:ro
+      - ./lab/glc/warm320.php:/var/www/html/warm320.php:ro
+      - ./lab/glc/glc.ini:/usr/local/etc/php/conf.d/zz-glc.ini:ro
+      - ./lab/glc/pool.conf:/usr/local/etc/php-fpm.d/zz-glc.conf:ro
+    tmpfs:
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  glc-web:
+    profiles: ["glc"]
+    image: nginx:1.27-alpine
+    container_name: p2s-glc-web
+    depends_on:
+      - glc-fpm
+    ports:
+      - "127.0.0.1:8163:80"
+    volumes:
+      - ./lab/glc/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: grail (project was p2s-grail) =====================
+  grail-fpm:
+    profiles: ["grail"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-grail-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/app/index.php:/var/www/html/index.php:ro
+      - ./lab/app/poc.php:/var/www/html/poc.php:ro
+      - ./lab/app/producer.php:/var/www/html/producer.php:ro
+      - ./lab/app/r2g.php:/var/www/html/r2g.php:ro
+      - ./lab/app/sess.php:/var/www/html/sess.php:ro
+      - ./lab/app/unser.php:/var/www/html/unser.php:ro
+      - ./lab/grail/plain.php:/var/www/html/plain.php:ro
+      - ./lab/grail/grail.ini:/usr/local/etc/php/conf.d/zz-grail.ini:ro
+      - ./lab/grail/pool.conf:/usr/local/etc/php-fpm.d/zz-grail.conf:ro
+    tmpfs:
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  grail-web:
+    profiles: ["grail"]
+    image: nginx:1.27-alpine
+    container_name: p2s-grail-web
+    depends_on:
+      - grail-fpm
+    ports:
+      - "8134:80"
+    volumes:
+      - ./lab/grail/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: hl (project was p2s-hl) =====================
+  hl-fpm:
+    profiles: ["hl"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-hl-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/app/index.php:/var/www/html/index.php:ro
+      - ./lab/app/poc.php:/var/www/html/poc.php:ro
+      - ./lab/app/producer.php:/var/www/html/producer.php:ro
+      - ./lab/app/r2g.php:/var/www/html/r2g.php:ro
+      - ./lab/app/sess.php:/var/www/html/sess.php:ro
+      - ./lab/app/unser.php:/var/www/html/unser.php:ro
+      - ./lab/hl/plain.php:/var/www/html/plain.php:ro
+      - ./lab/hl/hl.ini:/usr/local/etc/php/conf.d/zz-hl.ini:ro
+      - ./lab/hl/pool.conf:/usr/local/etc/php-fpm.d/zz-hl.conf:ro
+    tmpfs:
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  hl-web:
+    profiles: ["hl"]
+    image: nginx:1.27-alpine
+    container_name: p2s-hl-web
+    depends_on:
+      - hl-fpm
+    ports:
+      - "8139:80"
+    volumes:
+      - ./lab/hl/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: hz1 (project was p2s-hz1) =====================
+  hz1-fpm:
+    profiles: ["hz1"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-hz1-fpm
+    volumes:
+      - ./lab/hz1/html:/var/www/html:ro
+      - ./lab/hz1/zz-hz1.ini:/usr/local/etc/php/conf.d/zz-hz1.ini:ro
+      - ./lab/hz1/pool.conf:/usr/local/etc/php-fpm.d/zz-hz1.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  hz1-web:
+    profiles: ["hz1"]
+    image: nginx:alpine
+    container_name: p2s-hz1-web
+    depends_on: [hz1-fpm]
+    ports:
+      - "127.0.0.1:8180:80"
+    volumes:
+      - ./lab/hz1/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: incrace (project was php2shell_incrace) =====================
+  incrace-fpm:
+    profiles: ["incrace"]
+    # stock 8.4.26-fpm + RO html + tmpfs /var/sess; stock pm=dynamic/max_children=5 is the race, so no pool mount.
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: php2shell-incrace-fpm
+    volumes:
+      - ./lab/incrace/html:/var/www/html:ro
+      - ./lab/incrace/zz-incrace.ini:/usr/local/etc/php/conf.d/zz-incrace.ini:ro
+    tmpfs:
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  incrace-web:
+    profiles: ["incrace"]
+    image: nginx:alpine
+    container_name: php2shell-incrace-web
+    depends_on:
+      - incrace-fpm
+    ports:
+      - "8120:80"
+    volumes:
+      - ./lab/incrace/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: incvec (project was p2s-a23) =====================
+  incvec-fpm:
+    profiles: ["incvec"]
+    # stock 8.4.26-fpm; writable docroot + log dir are tmpfs seeded from html/; access-log pool fragment alongside www.conf.
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-a23-fpm
+    command: ["sh","-c","cp -a /seed/. /var/www/html/ 2>/dev/null; chmod -R a+rX /var/www/html; chmod 1777 /var/www/html; mkdir -p /var/log/php /var/sess; : > /var/log/php/error.log; : > /var/log/php/access.log; chmod 666 /var/log/php/error.log /var/log/php/access.log; chmod 1777 /var/log/php /var/sess; exec php-fpm"]
+    volumes:
+      - ./lab/incvec/html:/seed:ro
+      - ./lab/incvec/zz-incvec.ini:/usr/local/etc/php/conf.d/zz-incvec.ini:ro
+      - ./lab/incvec/zz-access.conf:/usr/local/etc/php-fpm.d/zz-access.conf:ro
+    tmpfs:
+      - /var/www/html
+      - /var/log/php
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  incvec-web:
+    profiles: ["incvec"]
+    image: nginx:alpine
+    container_name: p2s-a23-web
+    depends_on:
+      - incvec-fpm
+    ports:
+      - "8138:80"
+    volumes:
+      - ./lab/incvec/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: lexbor (no original top-level name) =====================
+  lexbor-lexbor:
+    profiles: ["lexbor"]
+    build:
+      context: .
+      dockerfile: lab/lexbor/Dockerfile
+    image: php2shell-lexbor-asan:latest
+    ports:
+      - "8493:80"
+    volumes:
+      - ./lab/lexbor:/work:ro
+    environment:
+      USE_ZEND_ALLOC: "0"
+      USE_TRACKED_ALLOC: "1"
+      # log_errors + stderr so the ASan report is captured in `docker logs`.
+      ASAN_OPTIONS: "detect_leaks=0:abort_on_error=0:exitcode=99"
+    command: >
+      php -n
+      -d error_reporting=E_ALL -d display_errors=0 -d log_errors=1
+      -S 0.0.0.0:80 -t /work
+    networks:
+      default:
+        aliases: ["lexbor"]
+
+  # ===================== profile: nday (project was p2s_nday) =====================
+  nday-fpm:
+    profiles: ["nday"]
+    build:
+      context: .
+      dockerfile: lab/nday/Dockerfile
+    image: p2s-nday-fpm:latest
+    container_name: p2s-nday-fpm
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  nday-web:
+    profiles: ["nday"]
+    image: nginx:alpine
+    container_name: p2s-nday-web
+    depends_on:
+      - nday-fpm
+    ports:
+      - "8152:80"
+    volumes:
+      - ./lab/parseroracle/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: opcache (project was p2s-av3) =====================
+  opcache-fpm:
+    profiles: ["opcache"]
+    # stock 8.4.26-fpm (opcache from stock image, zz-opcache.ini tunes file_cache).
+    # docroot + file_cache are named volumes so the verify's poisoned .bin survives restart (down -v clears).
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-av3-fpm
+    command: ["sh","-c","[ -e /var/www/html/.seeded ] || { cp -a /seed/. /var/www/html/ 2>/dev/null; chmod -R a+rX /var/www/html; chmod 1777 /var/www/html; touch /var/www/html/.seeded; }; chmod 1777 /var/opcache; exec php-fpm"]
+    volumes:
+      - ./lab/opcache/html:/seed:ro
+      - ./lab/opcache/zz-opcache.ini:/usr/local/etc/php/conf.d/zz-opcache.ini:ro
+      - opcache-docroot:/var/www/html
+      - opcache-filecache:/var/opcache
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  opcache-web:
+    profiles: ["opcache"]
+    image: nginx:1.27-alpine
+    container_name: p2s-av3-web
+    depends_on:
+      - opcache-fpm
+    ports:
+      - "127.0.0.1:8144:80"
+    volumes:
+      - ./lab/opcache/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: osh (project was p2s-osh) =====================
+  osh-fpm:
+    profiles: ["osh"]
+    # reuses p2s-fpm426-gdb base for procps (probe's worker_pid needs `ps`); opcache from stock image.
+    image: p2s-fpm426-gdb
+    container_name: p2s-osh-fpm
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./lab/osh/html:/var/www/html:ro
+      - ./lab/osh/zz-opcache.ini:/usr/local/etc/php/conf.d/zz-opcache.ini:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  osh-fpm-jit:
+    profiles: ["osh"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-osh-fpm-jit
+    depends_on:
+      - osh-fpm
+    cap_add:
+      - SYS_PTRACE
+    volumes:
+      - ./lab/osh/html:/var/www/html:ro
+      - ./lab/osh/zz-opcache-jit.ini:/usr/local/etc/php/conf.d/zz-opcache.ini:ro
+    networks:
+      default:
+        aliases: ["fpm-jit"]
+
+  osh-web:
+    profiles: ["osh"]
+    image: nginx:1.27-alpine
+    container_name: p2s-osh-web
+    depends_on:
+      - osh-fpm
+    ports:
+      - "127.0.0.1:8155:80"
+    volumes:
+      - ./lab/osh/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  osh-web-jit:
+    profiles: ["osh"]
+    image: nginx:1.27-alpine
+    container_name: p2s-osh-web-jit
+    depends_on:
+      - osh-fpm-jit
+    volumes:
+      - ./lab/osh/nginx-jit.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web-jit"]
+
+  # ===================== profile: parseroracle (project was p2s_b14_parseroracle) =====================
+  parseroracle-fpm:
+    profiles: ["parseroracle"]
+    build:
+      context: .
+      dockerfile: lab/parseroracle/Dockerfile
+    image: p2s-b14-parseroracle-fpm:latest
+    container_name: p2s-b14-fpm
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  parseroracle-web:
+    profiles: ["parseroracle"]
+    image: nginx:alpine
+    container_name: p2s-b14-web
+    depends_on:
+      - parseroracle-fpm
+    ports:
+      - "8133:80"
+    volumes:
+      - ./lab/parseroracle/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: pggc (project was php2shell_pggc) =====================
+  pggc-fpm:
+    profiles: ["pggc"]
+    build:
+      context: .
+      dockerfile: lab/pggc/Dockerfile
+    image: php2shell-pggc-fpm:latest
+    container_name: php2shell-pggc-fpm
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  pggc-web:
+    profiles: ["pggc"]
+    image: nginx:alpine
+    container_name: php2shell-pggc-web
+    depends_on:
+      - pggc-fpm
+    ports:
+      - "8121:80"
+    volumes:
+      - ./lab/pggc/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: phar (project was p2s-av2) =====================
+  phar-fpm:
+    profiles: ["phar"]
+    build:
+      context: .
+      dockerfile: lab/phar/Dockerfile
+    image: p2s-av2-fpm:latest
+    container_name: p2s-av2-fpm
+    volumes:
+      - app:/var/www/html
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  phar-web:
+    profiles: ["phar"]
+    image: nginx:alpine
+    container_name: p2s-av2-web
+    depends_on:
+      - phar-fpm
+    ports:
+      - "8146:80"
+    volumes:
+      - ./lab/phar/nginx.conf:/etc/nginx/nginx.conf:ro
+      - app:/var/www/html:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: pkg (project was p2s-pkg) =====================
+  pkg-fpm:
+    profiles: ["pkg"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-pkg-fpm
+    volumes:
+      - ./lab/pkg/html:/var/www/html:ro
+      - ./lab/pkg/zz-pkg.ini:/usr/local/etc/php/conf.d/zz-pkg.ini:ro
+      - ./lab/pkg/pool.conf:/usr/local/etc/php-fpm.d/zz-pkg.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  pkg-web:
+    profiles: ["pkg"]
+    image: nginx:alpine
+    container_name: p2s-pkg-web
+    depends_on:
+      - pkg-fpm
+    ports:
+      - "127.0.0.1:8159:80"
+    volumes:
+      - ./lab/pkg/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: redissess (project was php2shell_redissess) =====================
+  redissess-redis:
+    profiles: ["redissess"]
+    image: redis:7-alpine
+    container_name: p2s-av8-redis
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports:
+      # published so the PoC's inline RESP client can reach it directly,
+      # standing in for an SSRF (gopher://redis) in a real target.
+      - "127.0.0.1:6380:6379"
+    networks:
+      default:
+        aliases: ["redis"]
+
+  redissess-fpm:
+    profiles: ["redissess"]
+    build:
+      context: .
+      dockerfile: lab/redissess/Dockerfile
+    image: p2s-av8-fpm:latest
+    container_name: p2s-av8-fpm
+    depends_on:
+      - redissess-redis
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  redissess-web:
+    profiles: ["redissess"]
+    image: nginx:alpine
+    container_name: p2s-av8-web
+    depends_on:
+      - redissess-fpm
+    ports:
+      - "8148:80"
+    volumes:
+      - ./lab/redissess/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: savepathhijack (project was php2shell_savepathhijack) =====================
+  savepathhijack-fpm:
+    profiles: ["savepathhijack"]
+    # stock 8.4.26-fpm; docroot + /var/sess are tmpfs seeded from html/ (writer drops a .php); pm=static/max_children=1 pool.
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: php2shell-savepathhijack-fpm
+    command: ["sh","-c","cp -a /seed/. /var/www/html/ 2>/dev/null; chmod -R a+rX /var/www/html; chmod 1777 /var/www/html; mkdir -p /var/sess; chmod 1777 /var/sess; exec php-fpm"]
+    volumes:
+      - ./lab/savepathhijack/html:/seed:ro
+      - ./lab/savepathhijack/zz-savepathhijack.ini:/usr/local/etc/php/conf.d/zz-savepathhijack.ini:ro
+      - ./lab/savepathhijack/pool.conf:/usr/local/etc/php-fpm.d/zz-savepathhijack.conf:ro
+    tmpfs:
+      - /var/www/html
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  savepathhijack-web:
+    profiles: ["savepathhijack"]
+    image: nginx:alpine
+    container_name: php2shell-savepathhijack-web
+    depends_on:
+      - savepathhijack-fpm
+    ports:
+      - "8130:80"
+    volumes:
+      - ./lab/savepathhijack/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: seat (project was p2s-seat) =====================
+  seat-fpm:
+    profiles: ["seat"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-seat-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/seat/html:/var/www/html:ro
+      - ./lab/seat/seat.ini:/usr/local/etc/php/conf.d/zz-seat.ini:ro
+      - ./lab/seat/pool.conf:/usr/local/etc/php-fpm.d/zz-seat.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  seat-web:
+    profiles: ["seat"]
+    image: nginx:1.27-alpine
+    container_name: p2s-seat-web
+    depends_on:
+      - seat-fpm
+    ports:
+      - "127.0.0.1:8168:80"
+    volumes:
+      - ./lab/seat/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: seo (project was p2s-av6) =====================
+  seo-fpm:
+    profiles: ["seo"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-av6-fpm
+    volumes:
+      - ./lab/seo/html:/var/www/html:ro
+      - ./lab/seo/zz-seo.ini:/usr/local/etc/php/conf.d/zz-seo.ini:ro
+      - ./lab/seo/pool.conf:/usr/local/etc/php-fpm.d/zz-seo.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  seo-web:
+    profiles: ["seo"]
+    image: nginx:alpine
+    container_name: p2s-av6-web
+    depends_on:
+      - seo-fpm
+    ports:
+      - "127.0.0.1:8146:80"
+    volumes:
+      - ./lab/seo/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: sfpi (project was p2s_av1) =====================
+  sfpi-fpm:
+    profiles: ["sfpi"]
+    # stock 8.4.26-fpm + RO html; writable sinks uploads/ and sess/ are 1777 tmpfs over html/; pool.conf empties security.limit_extensions.
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-av1-fpm
+    volumes:
+      - ./lab/sfpi/html:/var/www/html:ro
+      - ./lab/sfpi/zz-sfpi.ini:/usr/local/etc/php/conf.d/zz-sfpi.ini:ro
+      - ./lab/sfpi/pool.conf:/usr/local/etc/php-fpm.d/zz-sfpi.conf:ro
+      - type: tmpfs
+        target: /var/www/html/uploads
+        tmpfs:
+          mode: 01777
+      - type: tmpfs
+        target: /var/www/html/sess
+        tmpfs:
+          mode: 01777
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  sfpi-web:
+    profiles: ["sfpi"]
+    image: nginx:alpine
+    container_name: p2s-av1-web
+    depends_on:
+      - sfpi-fpm
+    ports:
+      - "8141:80"
+    volumes:
+      - ./lab/sfpi/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: shmfl (project was p2s-shmfl) =====================
+  shmfl-fpm:
+    profiles: ["shmfl"]
+    # reuses p2s-fpm426-gdb base (gdb/procps); opcache from stock image, zz-opcache.ini + shmfl.ini + pool mounted.
+    image: p2s-fpm426-gdb
+    container_name: p2s-shmfl-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/shmfl/html:/var/www/html:ro
+      - ./lab/shmfl/zz-opcache.ini:/usr/local/etc/php/conf.d/zz-opcache.ini:ro
+      - ./lab/shmfl/shmfl.ini:/usr/local/etc/php/conf.d/zz-shmfl.ini:ro
+      - ./lab/shmfl/pool.conf:/usr/local/etc/php-fpm.d/zz-shmfl.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  shmfl-fpm-jit:
+    profiles: ["shmfl"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-shmfl-fpm-jit
+    depends_on:
+      - shmfl-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/shmfl/html:/var/www/html:ro
+      - ./lab/shmfl/zz-opcache-jit.ini:/usr/local/etc/php/conf.d/zz-opcache.ini:ro
+      - ./lab/shmfl/shmfl.ini:/usr/local/etc/php/conf.d/zz-shmfl.ini:ro
+      - ./lab/shmfl/pool.conf:/usr/local/etc/php-fpm.d/zz-shmfl.conf:ro
+    networks:
+      default:
+        aliases: ["fpm-jit"]
+
+  shmfl-web:
+    profiles: ["shmfl"]
+    image: nginx:1.27-alpine
+    container_name: p2s-shmfl-web
+    depends_on:
+      - shmfl-fpm
+    ports:
+      - "127.0.0.1:8165:80"
+    volumes:
+      - ./lab/shmfl/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  shmfl-web-jit:
+    profiles: ["shmfl"]
+    image: nginx:1.27-alpine
+    container_name: p2s-shmfl-web-jit
+    depends_on:
+      - shmfl-fpm-jit
+    volumes:
+      - ./lab/shmfl/nginx-jit.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web-jit"]
+
+  # ===================== profile: tp (project was p2s-tp) =====================
+  tp-fpm:
+    profiles: ["tp"]
+    image: p2s-fpm426-gdb
+    container_name: p2s-tp-fpm
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - ./lab/app/index.php:/var/www/html/index.php:ro
+      - ./lab/app/poc.php:/var/www/html/poc.php:ro
+      - ./lab/app/producer.php:/var/www/html/producer.php:ro
+      - ./lab/app/r2g.php:/var/www/html/r2g.php:ro
+      - ./lab/app/sess.php:/var/www/html/sess.php:ro
+      - ./lab/app/unser.php:/var/www/html/unser.php:ro
+      - ./lab/tp/plain.php:/var/www/html/plain.php:ro
+      - ./lab/tp/rx.php:/var/www/html/rx.php:ro
+      - ./lab/tp/tp.ini:/usr/local/etc/php/conf.d/zz-tp.ini:ro
+      - ./lab/tp/pool.conf:/usr/local/etc/php-fpm.d/zz-tp.conf:ro
+    tmpfs:
+      - /var/sess
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  tp-web:
+    profiles: ["tp"]
+    image: nginx:1.27-alpine
+    container_name: p2s-tp-web
+    depends_on:
+      - tp-fpm
+    ports:
+      - "8154:80"
+    volumes:
+      - ./lab/tp/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: wex (project was p2s-wex) =====================
+  wex-fpm:
+    profiles: ["wex"]
+    image: php:8.4.26-fpm@sha256:f5431b57bda75455d5271967cc6b67df8f0d0b943832756e0c78eccdc98767dd
+    container_name: p2s-wex-fpm
+    volumes:
+      - ./lab/wex/html:/var/www/html:ro
+      - ./lab/wex/zz-wex.ini:/usr/local/etc/php/conf.d/zz-wex.ini:ro
+      - ./lab/wex/pool.conf:/usr/local/etc/php-fpm.d/zz-wex.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  wex-web:
+    profiles: ["wex"]
+    image: nginx:alpine
+    container_name: p2s-wex-web
+    depends_on:
+      - wex-fpm
+    ports:
+      - "127.0.0.1:8153:80"
+    volumes:
+      - ./lab/wex/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+  # ===================== profile: mwfpm (8.5.11-fpm MULTI-worker pool; scatter + pin) =====================
+  # REUSE-first: no per-lab Dockerfile. Reuses the committed 8.5.11-fpm image
+  # p2s-vd24481-fpm:8.5.11 (built by the vd24481-8511 profile in
+  # docker-compose.versions.yml); its webroot already ships the remote_app.php a7
+  # echo sink. A static multi-worker pool (pm.max_children=6) is mounted OVER the
+  # image's single-worker pool file zz-vd24481.conf (loaded last, so this wins),
+  # plus a bare-number pid.php the scatter check parses as an int. The FastCGI
+  # port is published (9181) so poc/chains/fpm_fullchain_multiworker.py can run
+  # `pin` mode (one FCGI_KEEP_CONN connection) as well as `scatter` over nginx (:8181).
+  mwfpm-fpm:
+    profiles: ["mwfpm"]
+    image: p2s-vd24481-fpm:8.5.11
+    container_name: p2s-mwfpm-fpm
+    cap_add:
+      - SYS_PTRACE
+    ports:
+      - "127.0.0.1:9181:9000"
+    volumes:
+      - ./lab/mwfpm/pool.conf:/usr/local/etc/php-fpm.d/zz-vd24481.conf:ro
+      - ./lab/mwfpm/html/pid.php:/var/www/html/pid.php:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  mwfpm-web:
+    profiles: ["mwfpm"]
+    image: nginx:alpine
+    container_name: p2s-mwfpm-web
+    depends_on:
+      - mwfpm-fpm
+    ports:
+      - "127.0.0.1:8181:80"
+    volumes:
+      - ./lab/mwfpm/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      default:
+        aliases: ["web"]
+
+# Top-level volumes unioned from the originals (phar declared a named volume).
+volumes:
+  app: {}
+  # opcache lab: docroot + file_cache that must survive the verify's restart (down -v clears).
+  opcache-docroot: {}
+  opcache-filecache: {}

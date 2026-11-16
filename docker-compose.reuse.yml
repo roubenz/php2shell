@@ -1,0 +1,149 @@
+# docker-compose.reuse.yml — consolidated "reuse" group.
+#
+# Merge of the per-avenue compose files that REUSE a prebuilt image (none of
+# these build anything themselves). Select one avenue with its profile:
+#
+#   docker compose -f docker-compose.reuse.yml --profile aslrsurvey up -d
+#   docker compose -f docker-compose.reuse.yml --profile fcgi       up -d
+#   docker compose -f docker-compose.reuse.yml --profile oomdisc    up -d
+#   docker compose -f docker-compose.reuse.yml --profile pgpersist  up -d
+#   docker compose -f docker-compose.reuse.yml --profile rshutdown  up -d
+#   docker compose -f docker-compose.reuse.yml --profile survive    up -d
+#
+# CROSS-IMAGE DEPENDENCY (pre-existing, preserved as-is):
+#   - php2shell-fpm-vuln / php2shell-fpm-fixed  are built by core docker-compose.yml
+#     (services fpm-vuln / fpm-fixed). Build those first.
+#   - php2shell_c2-apache-vuln  is built by `docker compose -f docker-compose.versions.yml
+#     -p p2s-c2 --profile c2 build` (service c2-apache-vuln). Build that first.
+# Service map-keys are prefixed <profile>-<name> to avoid collisions; each service
+# keeps a network alias of its ORIGINAL service name for in-network reachability.
+
+services:
+
+  # ===== profile: aslrsurvey (from docker-compose.aslrsurvey.yml) =====
+  # Hope-B3/B5 ASLR-delta survey lab. Reuses php2shell-fpm-vuln:latest (built by
+  # core docker-compose.yml). Own container name p2s-b35-fpm + host port so a
+  # master restart to re-randomize ASLR never disturbs the shared fpm container.
+  # Backing: poc/aslr_delta_survey.py (--container p2s-b35-fpm, --port 9435),
+  # poc/verify_aslr_delta_survey.py.
+  aslrsurvey-fpm:
+    profiles: ["aslrsurvey"]
+    image: php2shell-fpm-vuln:latest
+    container_name: p2s-b35-fpm
+    ports:
+      - "127.0.0.1:9435:9000"
+    volumes:
+      # zzzz- sorts last in php-fpm.d/, so this overrides the baked single-worker
+      # pin with a 4-worker static pool (see pool.aslrsurvey.conf).
+      - ./lab/aslrsurvey/pool.aslrsurvey.conf:/usr/local/etc/php-fpm.d/zzzz-aslrsurvey.conf:ro
+    networks:
+      default:
+        aliases: ["fpm"]
+
+  # ===== profile: fcgi (from docker-compose.fcgi.yml) =====
+  # FastCGI PHP_VALUE=auto_prepend_file delivery harness. Reuses php2shell-fpm-vuln
+  # (built by core docker-compose.yml). Separate instance from the shared fpm
+  # container; publishes fpm 9000 to host 9100 and overrides the single-worker
+  # pin with a multi-worker pool. Backing: poc/verify_fcgi_autoprepend.py (:9100).
+  fcgi-fpm-fcgi-verify:
+    profiles: ["fcgi"]
+    image: php2shell-fpm-vuln
+    container_name: php2shell-fcgi-verify
+    ports:
+      - "9100:9000"
+    volumes:
+      # zzzz- sorts last in php-fpm.d/, so this overrides the single-worker pin
+      # with a multi-worker pool (see pool.fcgi-multi.conf).
+      - ./lab/fcgi/pool.fcgi-multi.conf:/usr/local/etc/php-fpm.d/zzzz-fcgi-multi.conf:ro
+    networks:
+      default:
+        aliases: ["fpm-fcgi-verify"]
+
+  # Patched build (8.4.27). The delivery route is corruption-free, so it should
+  # land here too (config/exposure route, not the memory-corruption CVE chain).
+  # Reuses php2shell-fpm-fixed (built by core docker-compose.yml).
+  fcgi-fpm-fcgi-verify-patched:
+    profiles: ["fcgi"]
+    image: php2shell-fpm-fixed
+    container_name: php2shell-fcgi-verify-patched
+    ports:
+      - "9101:9000"
+    volumes:
+      - ./lab/fcgi/pool.fcgi-multi.conf:/usr/local/etc/php-fpm.d/zzzz-fcgi-multi.conf:ro
+    networks:
+      default:
+        aliases: ["fpm-fcgi-verify-patched"]
+
+  # ===== profile: oomdisc (from docker-compose.oomdisc.yml, project php2shell_oomdisc) =====
+  # display_errors=On 8.4.26 Apache/mod_php lab for the OOM discriminator. Reuses
+  # the ALREADY-BUILT php2shell_c2-apache-vuln image (built by docker-compose.versions.yml --profile c2).
+  # INI overlay flips display_errors=On. Backing: poc/oom_discriminator.py (:8100),
+  # poc/verify_oom_discriminator.py (--container php2shell-oomdisc-8100).
+  oomdisc-oomdisc-apache:
+    profiles: ["oomdisc"]
+    image: php2shell_c2-apache-vuln:latest
+    container_name: php2shell-oomdisc-8100
+    volumes:
+      - ./lab/apache/oomdisc.ini:/usr/local/etc/php/conf.d/zzz-oomdisc.ini:ro
+    ports:
+      - "8100:80"
+    networks:
+      default:
+        aliases: ["oomdisc-apache"]
+
+  # ===== profile: pgpersist (from docker-compose.pgpersist.yml, project php2shell_pgpersist) =====
+  # PG(auto_prepend_file) persistent dispatch primitive lab. Reuses the
+  # ALREADY-BUILT php2shell_c2-apache-vuln image (built by docker-compose.versions.yml --profile c2).
+  # container_name PINNED to the original compose-project auto-name because
+  # poc/primitives/dispatch/verify_auto_prepend_persist.py + poc/primitives/dispatch/verify_auto_prepend_persist_narrow.py default
+  # PGP_CONTAINER=php2shell_pgpersist-pgp-apache-1. Backing: those two PoCs (:8096).
+  pgpersist-pgp-apache:
+    profiles: ["pgpersist"]
+    image: php2shell_c2-apache-vuln:latest
+    container_name: php2shell_pgpersist-pgp-apache-1
+    ports:
+      - "8096:80"
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    networks:
+      default:
+        aliases: ["pgp-apache"]
+
+  # ===== profile: rshutdown (from docker-compose.rshutdown.yml, project php2shell_rshutdown) =====
+  # Pre-RINIT RSHUTDOWN-skip dangle primitive lab. Reuses the ALREADY-BUILT
+  # php2shell_c2-apache-vuln image (built by docker-compose.versions.yml --profile c2). container_name
+  # PINNED to the original compose-project auto-name because
+  # poc/primitives/groom/verify_rshutdown_dangle.py defaults --container php2shell_rshutdown-rsd-apache-1.
+  # Backing: poc/primitives/groom/rshutdown_dangle.py + poc/primitives/groom/verify_rshutdown_dangle.py (:8098).
+  rshutdown-rsd-apache:
+    profiles: ["rshutdown"]
+    image: php2shell_c2-apache-vuln:latest
+    container_name: php2shell_rshutdown-rsd-apache-1
+    ports:
+      - "8098:80"
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    networks:
+      default:
+        aliases: ["rsd-apache"]
+
+  # ===== profile: survive (from docker-compose.survive.yml, project php2shell_survive) =====
+  # Worker-surviving dispatch verification lab. Reuses the ALREADY-BUILT
+  # php2shell_c2-apache-vuln image (built by docker-compose.versions.yml --profile c2). A pid probe
+  # is mounted so the verifier can tell a clean bailout from a crash+respawn.
+  # Backing: poc/primitives/dispatch/verify_survive_dispatch.py (:8094, container php2shell-survive-8094).
+  survive-apache-survive:
+    profiles: ["survive"]
+    image: php2shell_c2-apache-vuln:latest
+    container_name: php2shell-survive-8094
+    volumes:
+      - ./lab/apache-pool/pid-survive.php:/var/www/html/pid-survive.php:ro
+    ports:
+      - "8094:80"
+    networks:
+      default:
+        aliases: ["apache-survive"]

@@ -1,0 +1,5 @@
+# Control dir: a VALID php_value, so the per-dir INI stage runs (same code path
+# as junkdir) but emits NO zend_error -> the stale backtrace zval is never
+# dtor'd here. Isolates "junk INI warning" as the crash trigger, not merely
+# "a .htaccess with a php_value exists".
+php_value memory_limit "256M"

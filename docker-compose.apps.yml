@@ -1,0 +1,249 @@
+# Consolidated "apps" group: multi-service application / framework / DB stacks.
+# Merged from docker-compose.{pma,wp854,mxpl,mxpl-pollute,preloadrinit}.yml.
+# Each original compose file becomes one Compose profile. Service map-keys are
+# renamed <profile>-<originalname> to avoid collisions; each service carries a
+# network alias equal to its ORIGINAL service name so in-network DNS (nginx
+# fastcgi_pass php:9000, PMA_HOST=db, WP DB_HOST=wpdb00001, ...) still resolves.
+# Each profile gets its own dedicated network so the reused alias "php" never
+# collides across profiles. container_name values are preserved verbatim; the
+# pma service (which had none) is pinned to its former auto-name because PoCs
+# docker-exec it by that name.
+#
+# Usage:  docker compose -f docker-compose.apps.yml --profile <profile> up -d
+# Profiles: pma wp854 mxpl mxpl-pollute preloadrinit
+
+services:
+  # ------------------------------------------------------------------ pma
+  # phpMyAdmin (Apache+mod_php prefork) + MariaDB. Was project php2shell_pma.
+  pma-pma:
+    image: phpmyadmin:latest
+    # container_name pinned so PoCs can docker-exec a stable name.
+    container_name: php2shell_pma-pma-1
+    profiles: ["pma"]
+    environment:
+      PMA_HOST: db
+      PMA_USER: root
+      PMA_PASSWORD: rootpw
+      UPLOAD_LIMIT: 300M
+    volumes:
+      - ./lab/pma/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+      # INI overrides for the a3-family window (memory_limit=32M etc.):
+      - ./lab/pma/php2shell-pma.ini:/usr/local/etc/php/conf.d/zz-php2shell.ini:ro
+      # The pecl uploadprogress ext would steal php_rfc1867_callback from the
+      # session module (loaded after it, no chain), so the pre-RINIT session
+      # decode of the consumer multipart never runs - disable it:
+      - ./lab/pma/disable-uploadprogress.ini:/usr/local/etc/php/conf.d/docker-php-ext-uploadprogress.ini:ro
+    ports:
+      - "8090:80"
+    depends_on:
+      - pma-db
+    networks:
+      pma_net:
+        aliases: ["pma"]
+
+  pma-db:
+    image: mariadb:11
+    profiles: ["pma"]
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpw
+      MARIADB_DATABASE: testdb
+    command: ["mariadbd", "--skip-networking=0"]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    networks:
+      pma_net:
+        aliases: ["db"]
+
+  # ---------------------------------------------------------------- wp854
+  # WordPress 7.1.3 on php2shell-wordpress:8.5.4-0ubuntu1 + MariaDB. Was -p wp854.
+  wp854-wpdb00001:
+    image: mariadb:11.8
+    container_name: wpdb00001
+    profiles: ["wp854"]
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: 'P2s!9Qa7x'
+      MARIADB_ROOT_PASSWORD: 'R00t-P2s!Lab'
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    networks:
+      wp854net:
+        aliases: ["wpdb00001"]
+
+  wp854-apache:
+    image: php2shell-wordpress:8.5.4-0ubuntu1
+    container_name: wp854-apache
+    profiles: ["wp854"]
+    depends_on:
+      wp854-wpdb00001:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:19500:80"
+    networks:
+      wp854net:
+        aliases: ["apache"]
+
+  # ----------------------------------------------------------------- mxpl
+  # mismatch + opcache.preload: php:8.4.26-fpm + nginx, plus 8.4.27 fixed control.
+  mxpl-php:
+    image: php:8.4.26-fpm
+    container_name: php2shell-mxpl-php
+    profiles: ["mxpl"]
+    volumes:
+      - ./lab/mxpl/comp/comp.ini:/usr/local/etc/php/conf.d/zz-mxpl.ini:ro
+      - ./lab/mxpl/comp/preload_gadget.php:/var/www/preload_gadget.php:ro
+      - ./lab/mxpl/comp/www:/var/www/html:ro
+    expose: ["9000"]
+    networks:
+      mxpl_net:
+        aliases: ["php"]
+
+  mxpl-web:
+    image: nginx:1.27-alpine
+    container_name: php2shell-mxpl-web
+    profiles: ["mxpl"]
+    ports: ["127.0.0.1:8914:80"]
+    volumes:
+      - ./lab/mxpl/comp/www:/var/www/html:ro
+      - ./lab/mxpl/comp/nginx-vuln.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [mxpl-php]
+    networks:
+      mxpl_net:
+        aliases: ["web"]
+
+  # Patched negative control: PHP 8.4.27. Same config incl. opcache.preload + mismatch.
+  mxpl-phpfixed:
+    image: php2shell-fpm-fixed
+    container_name: php2shell-mxpl-phpfixed
+    profiles: ["mxpl"]
+    volumes:
+      - ./lab/mxpl/comp/comp.ini:/usr/local/etc/php/conf.d/zz-mxpl.ini:ro
+      - ./lab/mxpl/comp/preload_gadget.php:/var/www/preload_gadget.php:ro
+      - ./lab/mxpl/comp/www:/var/www/html:ro
+    expose: ["9000"]
+    networks:
+      mxpl_net:
+        aliases: ["phpfixed"]
+
+  mxpl-webfixed:
+    image: nginx:1.27-alpine
+    container_name: php2shell-mxpl-webfixed
+    profiles: ["mxpl"]
+    ports: ["127.0.0.1:8915:80"]
+    volumes:
+      - ./lab/mxpl/comp/www:/var/www/html:ro
+      - ./lab/mxpl/comp/nginx-fixed.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [mxpl-phpfixed]
+    networks:
+      mxpl_net:
+        aliases: ["webfixed"]
+
+  # --------------------------------------------------------- mxpl-pollute
+  # pollution decider lab: php:8.4.26-fpm (single-worker) + nginx.
+  mxpl-pollute-php:
+    image: php:8.4.26-fpm
+    container_name: php2shell-mxpl-pollute-php
+    profiles: ["mxpl-pollute"]
+    volumes:
+      - ./lab/mxpl/pollute.ini:/usr/local/etc/php/conf.d/zz-mxpl.ini:ro
+      - ./lab/mxpl/fpm-single.conf:/usr/local/etc/php-fpm.d/zz-single.conf:ro
+      - ./lab/mxpl/pollute-www:/var/www/html:ro
+    expose: ["9000"]
+    networks:
+      mxpl_pollute_net:
+        aliases: ["php"]
+
+  mxpl-pollute-web:
+    image: nginx:1.27-alpine
+    container_name: php2shell-mxpl-pollute-web
+    profiles: ["mxpl-pollute"]
+    ports: ["127.0.0.1:8913:80"]
+    volumes:
+      - ./lab/mxpl/pollute-www:/var/www/html:ro
+      - ./lab/mxpl/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [mxpl-pollute-php]
+    networks:
+      mxpl_pollute_net:
+        aliases: ["web"]
+
+  # --------------------------------------------------------- preloadrinit
+  # pre-RINIT session deserialize -> opcache.preload gadget: vuln + fixed controls.
+  preloadrinit-php:
+    image: php:8.4.26-fpm
+    container_name: php2shell-preloadrinit-php
+    profiles: ["preloadrinit"]
+    volumes:
+      - ./lab/preload-rinit/zz-preload.ini:/usr/local/etc/php/conf.d/zz-preload.ini:ro
+      - ./lab/preload-rinit/preload_gadget.php:/var/www/preload_gadget.php:ro
+      - ./lab/preload-rinit/www:/var/www/html:ro
+    expose:
+      - "9000"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      preloadrinit_net:
+        aliases: ["php"]
+
+  preloadrinit-web:
+    image: nginx:1.27-alpine
+    container_name: php2shell-preloadrinit-web
+    profiles: ["preloadrinit"]
+    ports:
+      - "127.0.0.1:8911:80"
+    volumes:
+      - ./lab/preload-rinit/www:/var/www/html:ro
+      - ./lab/preload-rinit/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - preloadrinit-php
+    networks:
+      preloadrinit_net:
+        aliases: ["web"]
+
+  # Patched negative control (PHP 8.4.27). Same config incl. opcache.preload.
+  # The fix decodes objects as __PHP_Incomplete_Class during the progress update,
+  # so the gadget must NOT run here.
+  preloadrinit-php-fixed:
+    image: php2shell-fpm-fixed
+    container_name: php2shell-preloadrinit-php-fixed
+    profiles: ["preloadrinit"]
+    volumes:
+      - ./lab/preload-rinit/zz-preload.ini:/usr/local/etc/php/conf.d/zz-preload.ini:ro
+      - ./lab/preload-rinit/preload_gadget.php:/var/www/preload_gadget.php:ro
+      - ./lab/preload-rinit/www:/var/www/html:ro
+    expose:
+      - "9000"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      preloadrinit_net:
+        aliases: ["php-fixed"]
+
+  preloadrinit-web-fixed:
+    image: nginx:1.27-alpine
+    container_name: php2shell-preloadrinit-web-fixed
+    profiles: ["preloadrinit"]
+    ports:
+      - "127.0.0.1:8912:80"
+    volumes:
+      - ./lab/preload-rinit/www:/var/www/html:ro
+      - ./lab/preload-rinit/nginx-fixed.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - preloadrinit-php-fixed
+    networks:
+      preloadrinit_net:
+        aliases: ["web-fixed"]
+
+networks:
+  pma_net:
+  wp854net:
+    name: wp854net
+  mxpl_net:
+  mxpl_pollute_net:
+  preloadrinit_net:

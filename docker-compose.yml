@@ -1,0 +1,135 @@
+services:
+  cli-vuln:
+    build:
+      context: .
+      dockerfile: lab/cli/Dockerfile
+      args:
+        PHP_VERSION: "8.4.26"
+    ports:
+      - "8081:80"
+
+  cli-vuln83:
+    build:
+      context: .
+      dockerfile: lab/cli/Dockerfile
+      args:
+        PHP_VERSION: "8.3.35"
+    ports:
+      - "8087:80"
+
+  cli-fixed:
+    build:
+      context: .
+      dockerfile: lab/cli/Dockerfile
+      args:
+        PHP_VERSION: "8.4.27"
+    ports:
+      - "8082:80"
+
+  fpm-vuln:
+    build:
+      context: .
+      dockerfile: lab/fpm/Dockerfile
+      args:
+        PHP_VERSION: "8.4.26"
+
+  fpm-fixed:
+    build:
+      context: .
+      dockerfile: lab/fpm/Dockerfile
+      args:
+        PHP_VERSION: "8.4.27"
+
+  web-vuln:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./lab/fpm/nginx-vuln.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8083:80"
+    depends_on:
+      - fpm-vuln
+
+  web-fixed:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./lab/fpm/nginx-fixed.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8084:80"
+    depends_on:
+      - fpm-fixed
+
+  # cli harness (lab/cli/Dockerfile) at 8.4.26 with the stock-INI CMD; tagged php2shell-cli-stock:latest for var_destroy_ptr_leak.py's ASan `docker run`.
+  cli-stock:
+    build:
+      context: .
+      dockerfile: lab/cli/Dockerfile
+      args:
+        PHP_VERSION: "8.4.26"
+    image: php2shell-cli-stock:latest
+    # stock-ini CMD (display_errors off); shared lab/cli image, no a6 override
+    command: ["php",
+      "-d", "display_errors=0", "-d", "log_errors=1",
+      "-S", "0.0.0.0:80", "-t", "/var/www/html"]
+    ports:
+      - "8091:80"
+
+  # stock apache: shared c2 image + php.ini-production, a6 overlay neutralized (stock.ini)
+  apache-stock:
+    image: php2shell_c2-apache-vuln:latest
+    volumes:
+      - ./lab/apache-stock/php.ini-production:/usr/local/etc/php/php.ini:ro
+      - ./lab/apache-stock/stock.ini:/usr/local/etc/php/conf.d/zz-php2shell.ini:ro
+      - ./lab/apache-stock/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+    ports:
+      - "8089:80"
+
+  # 10-child prefork pool for proving the slowloris worker-pin in isolation
+  # (poc/verify_worker_pin.py). pid.php reveals the serving child's PID.
+  # shared c2 image; MPM swapped to 10 children (mpm-pool.conf over zz-mpm-one.conf)
+  apache-pool:
+    image: php2shell_c2-apache-vuln:latest
+    volumes:
+      - ./lab/apache-pool/mpm-pool.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+      - ./lab/apache-pool/pid.php:/var/www/html/pid.php:ro
+    ports:
+      - "8093:80"
+
+  cli-asan:
+    build:
+      context: .
+      dockerfile: lab/asan/Dockerfile
+      args:
+        PHP_TAG: "php-8.4.26"
+    ports:
+      - "8085:80"
+
+  cli-asan-fixed:
+    build:
+      context: .
+      dockerfile: lab/asan/Dockerfile
+      args:
+        PHP_TAG: "php-8.4.27"
+    ports:
+      - "8086:80"
+
+  # 8.4.26 ASAN cli-server at memory_limit=128M (same lab/asan image + CMD as
+  # cli-asan, only 16M->128M) so the app-free session-decode arm OOMs and the
+  # BG(unserialize) dangle fires deterministically. Backs session_decode_dangle.
+  cli-asan-128:
+    build:
+      context: .
+      dockerfile: lab/asan/Dockerfile
+      args:
+        PHP_TAG: "php-8.4.26"
+    container_name: p2s-sdd-vuln
+    command: ["php",
+      "-d", "memory_limit=128M", "-d", "post_max_size=32M",
+      "-d", "max_input_vars=1000000", "-d", "max_file_uploads=1000000",
+      "-d", "max_multipart_body_parts=1000000", "-d", "session.save_path=/tmp/sess",
+      "-d", "session.upload_progress.enabled=1", "-d", "session.upload_progress.freq=1%",
+      "-d", "session.upload_progress.min_freq=0", "-d", "session.use_cookies=0",
+      "-d", "session.use_only_cookies=0", "-d", "session.use_strict_mode=0",
+      "-d", "error_reporting=E_ALL", "-d", "display_errors=0", "-d", "log_errors=1",
+      "-S", "0.0.0.0:80", "-t", "/var/www/html"]
+    ports:
+      - "8405:80"

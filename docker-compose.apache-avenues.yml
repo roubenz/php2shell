@@ -1,0 +1,280 @@
+# ============================================================================
+# APACHE-AVENUES grouped compose file.
+#
+# Consolidates five per-avenue Apache mod_php labs into ONE file, selected with
+# Compose `profiles:`. Bring up exactly ONE avenue at a time, e.g.
+#
+#   docker compose -f docker-compose.apache-avenues.yml --profile apfl      up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile fbt       up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile gfp       up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile shmismatch up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile memscale  up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile apsf     up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile apsf83   up -d --build
+#   docker compose -f docker-compose.apache-avenues.yml --profile apsf32   up -d --build
+#
+# This file stays at the repo ROOT, so every `context: .` / `lab/...` path and
+# every published host port resolves exactly as it did in the original
+# per-avenue files. Ports, images, build args (esp. PHP_VERSION / MEM_LIMIT /
+# CLEANUP), container names and caps are byte-identical to the originals; each
+# service carries a network alias for its original service name so in-network
+# DNS still resolves, and profiles keep one avenue up at a time.
+#
+# Merged from:
+#   docker-compose.apfl.yml        -> profile: apfl
+#   docker-compose.fbt.yml         -> profile: fbt        (fbt-apache + fbt-apache-511)
+#   docker-compose.gfp.yml         -> profile: gfp
+#   docker-compose.shmismatch.yml  -> profile: shmismatch (shmismatch-off + shmismatch-on)
+#   docker-compose.memscale.yml    -> profile: memscale   (mem128 + mem256 + mem512)
+#   docker-compose.apsf.yml        -> profiles: apsf / apsf83 / apsf32 (sink-free session-decode-UAF RCE)
+# ============================================================================
+
+services:
+
+  # --- apfl: Apache free-list poison -> libphp (8.4.26) -----------------------
+  # Shared gdb base image p2s-apache426-gdb (8.4.26-apache + gdb/procps); built by this service under the apfl profile.
+  apache-gdb-base:
+    profiles: ["apfl"]
+    build:
+      context: .
+      dockerfile: lab/apache-gdb/Dockerfile
+    image: p2s-apache426-gdb
+    command: ["true"]
+
+  # apfl lab (was service `apache`): reuses the gdb base image + mounts lab/apfl html/ini/mpm.
+  apfl-apache:
+    profiles: ["apfl"]
+    image: p2s-apache426-gdb
+    container_name: p2s-apfl-apache
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "127.0.0.1:8164:80"
+    volumes:
+      - ./lab/apfl/html:/var/www/html:ro
+      - ./lab/apfl/apfl.ini:/usr/local/etc/php/conf.d/zz-apfl.ini:ro
+      - ./lab/apfl/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+    networks:
+      default:
+        aliases: ["apache"]
+
+  # --- fbt: EG(last_fatal_error_backtrace) UAF (8.5.x mod_php) -----------------
+  # 8.5.12 == php:8.5-apache: fbt UAF already MITIGATED (attack does NOT crash).
+  fbt-apache:
+    profiles: ["fbt"]
+    build:
+      context: .
+      dockerfile: lab/fbt/Dockerfile
+      args:
+        PHP_VERSION: "8.5.12"   # pinned 8.5 -> 8.5.12 (freeze fixed status)
+    image: php2shell-fbt-apache:latest
+    container_name: php2shell-fbt-8103
+    ports:
+      - "8103:80"
+    networks:
+      default:
+        aliases: ["fbt-apache"]
+
+  # 8.5.11: VULNERABLE (primed attack SIGSEGVs the worker).
+  fbt-apache-511:
+    profiles: ["fbt"]
+    build:
+      context: .
+      dockerfile: lab/fbt/Dockerfile
+      args:
+        PHP_VERSION: "8.5.11"
+    image: php2shell-fbt-apache-511:latest
+    container_name: php2shell-fbt-8104
+    ports:
+      - "8104:80"
+    networks:
+      default:
+        aliases: ["fbt-apache-511"]
+
+  # --- gfp: gadget-fingerprint / Monolog POP auto-select (8.5.12) --------------
+  gfp:
+    profiles: ["gfp"]
+    build:
+      context: .
+      dockerfile: lab/gfp/Dockerfile
+      args:
+        PHP_VERSION: "8.5.12"   # pinned 8.5 -> 8.5.12 (freeze fixed status)
+        CLEANUP: "Off"
+    image: p2s-a4-gfp:latest
+    container_name: p2s-a4-gfp-8135
+    ports:
+      - "8135:80"
+    networks:
+      default:
+        aliases: ["gfp"]
+
+  # --- shmismatch: session serialize_handler mismatch object injection (8.5.12)-
+  shmismatch-off:
+    profiles: ["shmismatch"]
+    build:
+      context: .
+      dockerfile: lab/shmismatch/Dockerfile
+      args:
+        PHP_VERSION: "8.5.12"   # pinned 8.5 -> 8.5.12 (freeze fixed status)
+        CLEANUP: "Off"
+    image: php2shell-shmismatch-off:latest
+    container_name: php2shell-shmismatch-8105
+    ports:
+      - "8105:80"
+    networks:
+      default:
+        aliases: ["shmismatch-off"]
+
+  shmismatch-on:
+    profiles: ["shmismatch"]
+    build:
+      context: .
+      dockerfile: lab/shmismatch/Dockerfile
+      args:
+        PHP_VERSION: "8.5.12"   # pinned 8.5 -> 8.5.12 (freeze fixed status)
+        CLEANUP: "On"
+    image: php2shell-shmismatch-on:latest
+    container_name: php2shell-shmismatch-8106
+    ports:
+      - "8106:80"
+    networks:
+      default:
+        aliases: ["shmismatch-on"]
+
+  # --- memscale: memory_limit scaling labs (8.4.26, MaxRequestWorkers=1) -------
+  # No container_name in the original; the backing PoC (primitives/groom/verify_groom_scaling.py
+  # -> php2shell.py poc-a6-rce) addresses these ONLY by compose service name
+  # (docker compose restart/exec/cp) and by host port, never by auto-name, so
+  # none is pinned.
+  # all 3 profiles share base php2shell_c2-apache-vuln:latest + php.ini-production (a6 overlay neutralized); only memory_limit differs, injected via mem<N>.ini.
+  mem128:
+    profiles: ["memscale"]
+    image: php2shell_c2-apache-vuln:latest
+    volumes:
+      - ./lab/apache-stock/php.ini-production:/usr/local/etc/php/php.ini:ro
+      - ./lab/apache-stock/stock.ini:/usr/local/etc/php/conf.d/zz-php2shell.ini:ro
+      - ./lab/apache-mem/mem128.ini:/usr/local/etc/php/conf.d/zz-memlimit.ini:ro
+      - ./lab/apache-stock/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+    ports:
+      - "8110:80"
+    networks:
+      default:
+        aliases: ["mem128"]
+
+  mem256:
+    profiles: ["memscale"]
+    image: php2shell_c2-apache-vuln:latest
+    volumes:
+      - ./lab/apache-stock/php.ini-production:/usr/local/etc/php/php.ini:ro
+      - ./lab/apache-stock/stock.ini:/usr/local/etc/php/conf.d/zz-php2shell.ini:ro
+      - ./lab/apache-mem/mem256.ini:/usr/local/etc/php/conf.d/zz-memlimit.ini:ro
+      - ./lab/apache-stock/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+    ports:
+      - "8111:80"
+    networks:
+      default:
+        aliases: ["mem256"]
+
+  mem512:
+    profiles: ["memscale"]
+    image: php2shell_c2-apache-vuln:latest
+    volumes:
+      - ./lab/apache-stock/php.ini-production:/usr/local/etc/php/php.ini:ro
+      - ./lab/apache-stock/stock.ini:/usr/local/etc/php/conf.d/zz-php2shell.ini:ro
+      - ./lab/apache-mem/mem512.ini:/usr/local/etc/php/conf.d/zz-memlimit.ini:ro
+      - ./lab/apache-stock/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+    ports:
+      - "8112:80"
+    networks:
+      default:
+        aliases: ["mem512"]
+
+  # --- apsf/apsf83/apsf32: sink-free session-decode-UAF RCE (poc/chains/apache_offsetfree_rce.py) ---
+  # apsf :18790(+gdb :18791), apsf83 :18792(+gdb :18793), apsf32 (32M) gdb-only :18794.
+  # cleanup=On, use_strict_mode=0, save_path=/tmp, one prefork child; -gdb services add SYS_PTRACE for
+  # OBSERVE-only measurement (the fire + AIM sweep are pure HTTP).
+  apsf:
+    profiles: ["apsf"]
+    build:
+      context: ./lab/apsf
+      args:
+        PHP_VERSION: "8.4.26"
+    image: p2s-apsf84:latest
+    container_name: p2s-apsf
+    ports:
+      - "127.0.0.1:18790:80"
+    volumes: &v84
+      - ./lab/apsf/apsf.ini:/usr/local/etc/php/conf.d/zz-apsf.ini:ro
+      - ./lab/apsf/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+      - ./lab/apsf/html/plain.php:/var/www/html/plain.php:ro
+      - ./lab/apsf/html/pid.php:/var/www/html/pid.php:ro
+      - ./lab/apsf/html/sess.php:/var/www/html/sess.php:ro
+      - ./lab/apsf/genA_big.php:/genA_big.php:ro
+
+  apsf-gdb:
+    profiles: ["apsf"]
+    build:
+      context: ./lab/apsf
+      args:
+        PHP_VERSION: "8.4.26"
+    image: p2s-apsf84:latest
+    container_name: p2s-apsf-gdb
+    cap_add: ["SYS_PTRACE"]
+    security_opt: ["seccomp:unconfined"]
+    ports:
+      - "127.0.0.1:18791:80"
+    volumes: *v84
+
+  apsf83:
+    profiles: ["apsf83"]
+    build:
+      context: ./lab/apsf
+      args:
+        PHP_VERSION: "8.3.26"
+    image: p2s-apsf83img:latest
+    container_name: p2s-apsf83
+    ports:
+      - "127.0.0.1:18792:80"
+    volumes: &v83
+      - ./lab/apsf/apsf.ini:/usr/local/etc/php/conf.d/zz-apsf.ini:ro
+      - ./lab/apsf/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+      - ./lab/apsf/html/plain.php:/var/www/html/plain.php:ro
+      - ./lab/apsf/html/pid.php:/var/www/html/pid.php:ro
+      - ./lab/apsf/html/sess.php:/var/www/html/sess.php:ro
+      - ./lab/apsf/genA_big.php:/genA_big.php:ro
+
+  apsf83-gdb:
+    profiles: ["apsf83"]
+    build:
+      context: ./lab/apsf
+      args:
+        PHP_VERSION: "8.3.26"
+    image: p2s-apsf83img:latest
+    container_name: p2s-apsf83-gdb
+    cap_add: ["SYS_PTRACE"]
+    security_opt: ["seccomp:unconfined"]
+    ports:
+      - "127.0.0.1:18793:80"
+    volumes: *v83
+
+  apsf32-gdb:
+    profiles: ["apsf32"]
+    build:
+      context: ./lab/apsf
+      args:
+        PHP_VERSION: "8.4.26"
+    image: p2s-apsf84:latest
+    container_name: p2s-apsf32-gdb
+    cap_add: ["SYS_PTRACE"]
+    security_opt: ["seccomp:unconfined"]
+    ports:
+      - "127.0.0.1:18794:80"
+    volumes:
+      - ./lab/apsf/apsf32.ini:/usr/local/etc/php/conf.d/zz-apsf.ini:ro
+      - ./lab/apsf/mpm-one.conf:/etc/apache2/conf-enabled/zz-mpm-one.conf:ro
+      - ./lab/apsf/html/plain.php:/var/www/html/plain.php:ro
+      - ./lab/apsf/html/pid.php:/var/www/html/pid.php:ro
+      - ./lab/apsf/html/sess.php:/var/www/html/sess.php:ro
+      - ./lab/apsf/genA_big.php:/genA_big.php:ro
