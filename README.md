@@ -180,7 +180,7 @@ MIT License ([LICENSE](LICENSE)).
 techniques come from other researchers and are credited inline in the module
 that uses them. Some primitives were arrived at independently here and only
 later found to have already been published by others on GitHub. The remainder is
-original research.
+original AI-assisted research.
 
 Use this **only** on systems you own or are explicitly authorized to test.
 Unauthorized access to computer systems is illegal in most jurisdictions. The
