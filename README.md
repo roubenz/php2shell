@@ -153,23 +153,6 @@ results. The RCE rows are the lab-proven routes behind the driver's decision
 table ([poc/DRIVER.md](poc/DRIVER.md)); each traces to the module and commit that
 proved it.
 
-## Roadmap / open problems
-
-- **Sink-free, pure-HTTP arm.** The RCE routes above need an application
-  unserialize sink. The session-upload-progress dangle can be armed over HTTP
-  alone; landing a sink-free black-box RCE on php-fpm under `cleanup=On` (seating
-  and consuming the dangle in-request) is the active frontier. The Apache
-  mod_php side of this is further along — an HTTP-seeded arm is in progress.
-- **Offset reduction.** The single-shot file-write chains ride a small
-  chunk-relative anchor set (`doc/CHAINS.md` tags these `minor+`); reducing them
-  to per-minor-only, and the table-driven routes off per-build tables, widens
-  reach.
-- **Zero-knowledge first round.** Replace the `/proc` or offline-gdb seed with an
-  HTTP disclosure (e.g. the session-id over-read into a `PHPSESSID` response
-  cookie) so round one needs no local knowledge.
-- **CVE-2026-109618 on plain builds.** The half-built-state crash is
-  deterministic under ASan; a reliable black-box crash on a stock build still
-  needs heap grooming.
 
 ## Disclaimer
 
