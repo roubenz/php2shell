@@ -153,6 +153,25 @@ results. The RCE rows are the lab-proven routes behind the driver's decision
 table ([poc/DRIVER.md](poc/DRIVER.md)); each traces to the module and commit that
 proved it.
 
+## Leak-channel note
+
+[`uncaught_exception_overread_leak.py`](poc/primitives/read_leak/uncaught_exception_overread_leak.py)
+discloses heap bytes through PHP's `%S`-specifier uncaught-exception/error-display
+path — a NUL-safe (length-based `ZSTR_LEN` copy, not a C-string) and
+response-reflected read, byte-exact verified across the full 0x00-0xFF range.
+A 25-repo public-corpus check (2026-11-17) found this exact mechanism named,
+but never built (hardcoded addresses, leak stage left unimplemented), in one
+other researcher's design notes (cookiengineer's `actual-php2shell`,
+`docs/info-leak.md` §3) — this is the first known working, independently
+re-verified implementation of it. It also corrects a different researcher's
+explicit "0 confirmed bits" HTTP memory-disclosure conclusion elsewhere in
+that corpus (Bhavye-Malhotra's `LEAK_MAP.md`). Every other NUL-safe
+disclosure found across the corpus rides a different carrier, overwhelmingly
+the Set-Cookie `PHPSESSID` over-read. The channel is still gated: no
+core-only-reachable `%S` site carries a decode-corruptible string today — it
+needs one app touchpoint (an app `throw` of session-stored data, or
+`compact()`/`extract()` over session-derived names), the same tier as the
+chain's already-accepted session seed.
 
 ## Disclaimer
 
